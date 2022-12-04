@@ -2,29 +2,78 @@
 title: "p8105_hw6_av2718"
 author: "Angelica Vina Albarracin"
 date: "2022-12-03"
-output: html_document
+output: github_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, collapse = TRUE, message = FALSE)
+
+library(dplyr)
+library(tidyverse)
+library(rvest)
+
 ```
 
-## R Markdown
+# Problem 2
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+```{r}
+#Load data raw data
+homicide_raw = read_csv("data/homicide-data.csv") %>% 
+  janitor::clean_names()
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+#Visualize first 8 rows
+head(homicide_raw, 8) # view first 8 rows of raw data
 ```
 
-## Including Plots
+This problem focuses on the `Homicide-data.csv` that The Washington Post gathered in 50 large U.S. cities and made available through GitHub. The raw data comprises `r dim(homicide_raw)`observations. The data included the geographical location of the homicide, whether an arrest was made, and, in most cases, basic demographic information about each victim. In total, the dataset contains 12 variables: `r ls(homicide_raw)`. Interestingly, the first and last names of the victims are included in the data, as well as the race of the victim, and exact location of the homicide (lat and log).
 
-You can also embed plots, for example:
+In the code chunk below, we create a `city_state` variable (e.g., "Baltimore, MD") and a binary variable `disposition` indicating whether the homicide was solved. We omit cities Dallas, TX; Phoenix, AZ; and Kansas City, MO – these don’t report victim race. Also omit Tulsa, AL – this is a data entry mistake. 
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r}
+#Clean and arrange raw variables, create city_state variable, and make 'disposition' a binary variable
+
+homicide_clean = homicide_raw %>% 
+  mutate(
+    city_state = str_c(city, ", " ,state), 
+    disposition = if_else(disposition %in% "Closed by arrest", 1, 0),
+    disposition = as.numeric(disposition),
+     victim_age = as.numeric(victim_age)) %>% 
+  filter(!city_state %in% c("Dallas, TX", "Phoenix, AZ", "Kansas City, MO", "Tulsa, AL"), #filter by city
+         victim_race %in% c("White", "Black")) %>% #filter by race
+  mutate(victim_race = fct_relevel(victim_race, "White")
+         )%>% 
+  select(!c(city, state))
+    
+
+#Visualize first 8 rows of new dataframe
+
+head(homicide_clean, 8) # view first 8 rows of tidied data
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+For the city of Baltimore, in the code chunk below use the glm function to fit a logistic regression with resolved vs unresolved as the outcome and victim age, sex and race as predictors. To do this, we first filter our data set to select the Baltimore data:
+
+```{r}
+baltimore_data = homicide_clean %>% 
+  filter(city_state == "Baltimore, MD") #new dataset with Baltimore data
+
+#Fit logistic regression
+
+glm1_baltimore = baltimore_data %>% 
+  glm(disposition ~ victim_age + victim_sex + victim_race, data = ., family = binomial()) 
+
+glm1_results = glm1_baltimore %>% 
+  broom::tidy(conf.int = T) %>% 
+  mutate(OR = exp(estimate)) %>%
+  select(term, log_OR = estimate, OR, p.value, conf.low, conf.high) 
+
+print(glm1_results)
+
+```
+
+Now, we run glm for each of the cities in our dataset, and extract the adjusted odds ratio (and CI) for solving homicides comparing male victims to female victims.
+
+
+
+```
+
