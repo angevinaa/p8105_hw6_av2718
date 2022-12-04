@@ -5,12 +5,14 @@ date: "2022-12-03"
 output: github_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, collapse = TRUE, message = FALSE)
+```{r setup, include=FALSE ,}
+knitr::opts_chunk$set(echo = TRUE, collapse = TRUE, message = FALSE , warning = FALSE)
 
 library(dplyr)
 library(tidyverse)
-library(rvest)
+library(lubridate)
+library(modelr)
+library(mgcv)
 
 ```
 
@@ -81,7 +83,7 @@ glm2_allcities = homicide_clean %>%
   select(city_state, victim_race, victim_age, victim_sex, disposition) %>%
   nest(data = -city_state) %>% 
   mutate(models = map(data, ~glm(disposition ~ victim_age + victim_sex + victim_race, data = .x, family = binomial())),
-         results = map(models, ~broom::tidy(x = .x, conf.int = T))) %>% 
+         results = map(models, ~broom::tidy(x = .x, conf.int = TRUE))) %>% 
   select(-data, -models) %>% 
   unnest(results) %>% 
   filter(term %in% "victim_sexMale") %>% #filter by sex 
@@ -114,7 +116,100 @@ glm2_plot = glm2_allcities %>%
 
 glm2_plot
 ```
-In the plot, we see that in the majority of US cities, it is less likely to be a male victim in a solved homicide than being female, as the majority of cities have an odds ratio that is less than 1 for being a male victim. In Albuquerque, the odds of being a male victim in a solved homicide are significantly higher than that of a female victim. In contrast, in New York City, the odds ratio is the lowest in the US, and the odds of being a female victim in a solved homicide than a male victim is higher compared to other cities. It's important to note that there is a lot of variability in the data, and the CIs are large. Therefore, the data must be interpreted cautiously before drawing further conclusions. 
 
+
+*Odds of Homicide Being Solved by Victim's Sex in US cities:* In the plot, we see that in the majority of US cities, it is less likely to be a male victim in a solved homicide than being female, as the majority of cities have an odds ratio that is less than 1 for being a male victim. In Albuquerque, the odds of being a male victim in a solved homicide are significantly higher than that of a female victim. In contrast, in New York City, the odds ratio is the lowest in the US, and the odds of being a female victim in a solved homicide than a male victim is higher compared to other cities. It's important to note that there is a lot of variability in the data, and the CIs are large. Therefore, the data must be interpreted cautiously before drawing further conclusions. 
+
+# Problem 3
+
+In this problem, we will analyze data gathered to understand the effects of several variables on a child’s birth weight. We start by loading and cleaning the data:
+
+```{r}
+birth_weight = read_csv("data/birthweight.csv", na = "") %>%
+  janitor::clean_names() %>% 
+  mutate(
+    babysex = as.factor(babysex),
+    frace = as.factor(frace),
+    malform = as.factor(malform),
+    mrace = as.factor(mrace))
+  
+  anyNA(birth_weight)
 ```
+
+*Model Justification:* I am from Colombia, one of the countries in Latino America with the highest adolescent pregnancy rate. One out of every five women under 19 has been through a pregnancy. Therefore, I am interested in the relationship between birthweight and mum's age and other factors that might contribute to this relationship, such as gestational age in weeks. Therefore, I propose a birthweight model with predictors of the mother's age and gestational age in weeks. I selected these three factors for my model. Being a mother at a younger (under 19) or older age (over 35) confers a higher risk of preterm birth, which is strongly associated with birth weight. 
+
+```{r}
+
+#Fit linear model
+
+model1_mlr = 
+  lm(bwt ~ momage + gaweeks, data = birth_weight)
+model1_mlr %>% 
+  broom::tidy()
+  
+
+#Plot linear model
+  
+model1_plot2 = 
+  birth_weight %>%
+  modelr::add_residuals(model1_mlr) %>%
+  modelr::add_predictions(model1_mlr) %>% 
+  ggplot(aes(x = pred, y = resid)) +
+  geom_point(alpha = 0.3) + 
+  geom_smooth(se = FALSE, method = "lm") + 
+  labs(title = "Residuals vs Fitted values of Birthweight Model 1", 
+       x = "Fitted Values", 
+       y = "Residuals")
+  
+model1_plot2
+```
+
+*Comments on regression model:* There is a lot of heteroscedasticity in our plot. As you can see, that the points vary greatly in the distance from the regression line; this suggests unequal variance in the fitted values of our model. Therefore, we can't trust the results of our regression model. 
+
+
+```{r}
+#run MLR model with length at birth and gestational age
+
+model2_mlr = lm(bwt ~ blength + gaweeks, data = birth_weight) 
+summary(model2_mlr)
+
+#run MLR model with head circumference, length, sex and their interactions
+
+model3_mlr = lm(bwt ~ bhead + blength + babysex + bhead*blength + bhead*babysex + blength*babysex + bhead*blength*babysex, data = birth_weight)
+summary(model3_mlr)
+
+#cross validation between models
+
+cv_df =
+  crossv_mc(birth_weight, 1000) %>% 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble))
+
+cv_df = 
+  cv_df %>% 
+  mutate(
+    model1_mlr  = map(train, ~lm(bwt ~ ppwt + ppbmi + wtgain + delwt, data = .x)),
+    model2_mlr     = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+    model3_mlr  = map(train, ~lm(bwt ~ bhead + blength + babysex + bhead*blength + bhead*babysex + blength*babysex + bhead*blength*babysex, data = as_tibble(.x)))) %>% 
+  mutate(
+    rmse_model1 = map2_dbl(model1_mlr, test, ~rmse(model = .x, data = .y)),
+    rmse_model2   = map2_dbl(model2_mlr, test, ~rmse(model = .x, data = .y)),
+    rmse_model3  = map2_dbl(model3_mlr, test, ~rmse(model = .x, data = .y)))
+
+cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse))+
+  geom_violin()
+  
+```
+
+
+*Comments on model comparission:* Models 2 and 3 have comparable RMSE values and appear similar in predicting a baby's birth weight. The model we developed, which has as predictors mother's age and gestational weeks, has a higher error. Therefore, it seems that the better model to predict birthweight is model 3, which has the lowest RMSE and accounts for head circumference, length, sex, and all interactions (including the three-way interaction) between these predictors. Depending on our goal, one model will ultimately be better than the other; if our goal is to calculate birth at weight, then model 3 is the best. However, our model or another model which includes external factors (e.g., smoking, mum's weight, etc.) will give us more information if our goal is to understand which health behaviors and external factors are associated with higher or lower birth weight. 
 
