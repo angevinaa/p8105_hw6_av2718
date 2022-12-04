@@ -73,7 +73,48 @@ print(glm1_results)
 
 Now, we run glm for each of the cities in our dataset, and extract the adjusted odds ratio (and CI) for solving homicides comparing male victims to female victims.
 
+```{r}
 
+#nest data and run glm on each city
+
+glm2_allcities = homicide_clean %>% 
+  select(city_state, victim_race, victim_age, victim_sex, disposition) %>%
+  nest(data = -city_state) %>% 
+  mutate(models = map(data, ~glm(disposition ~ victim_age + victim_sex + victim_race, data = .x, family = binomial())),
+         results = map(models, ~broom::tidy(x = .x, conf.int = T))) %>% 
+  select(-data, -models) %>% 
+  unnest(results) %>% 
+  filter(term %in% "victim_sexMale") %>% #filter by sex 
+  mutate(OR = exp(estimate),
+         conf.low = exp(conf.low),
+         conf.high = exp(conf.high))
+```
+
+Lastly, we create a plot that shows the estimated ORs and CIs for each city:
+
+```{r}
+
+glm2_plot = glm2_allcities %>% 
+  ggplot(aes(x = OR, y = reorder(city_state, OR)))+ #reorder cities according to proportion of homicides
+  geom_point(color = 4)+
+  geom_errorbar(aes(xmin = conf.low, xmax = conf.high))+ # add error bars based on CIs
+  labs(
+    title = "Odds of Homicide Being Solved by Victim's Sex in US cities",
+    x = "Odds Ratio",
+    y = "US City" +
+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  theme(axis.text.y = element_text(size = 6)) +
+  theme(plot.title = element_text(hjust = 0)) +
+  theme(axis.ticks = element_blank()) +
+  theme(axis.text = element_text(size = 7)) +
+  theme(legend.title = element_text(size = 8)) +
+  theme(legend.text = element_text(size = 6)) +
+  theme(plot.title = element_text(hjust = 0.5))
+  )
+
+glm2_plot
+```
+In the plot, we see that in the majority of US cities, it is less likely to be a male victim in a solved homicide than being female, as the majority of cities have an odds ratio that is less than 1 for being a male victim. In Albuquerque, the odds of being a male victim in a solved homicide are significantly higher than that of a female victim. In contrast, in New York City, the odds ratio is the lowest in the US, and the odds of being a female victim in a solved homicide than a male victim is higher compared to other cities. It's important to note that there is a lot of variability in the data, and the CIs are large. Therefore, the data must be interpreted cautiously before drawing further conclusions. 
 
 ```
 
